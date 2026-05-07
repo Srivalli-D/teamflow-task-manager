@@ -30,10 +30,13 @@ export default function ProjectDetails() {
   // Modals
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState<any>(null);
   const [editingTask, setEditingTask] = useState<any>(null);
   
   // Filters
   const [taskFilters, setTaskFilters] = useState({ priority: 'All', status: 'All', assignee: 'All' });
+  const [sortBy, setSortBy] = useState<'created_at' | 'due_date'>('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [taskSearch, setTaskSearch] = useState('');
   const [memberSearch, setMemberSearch] = useState('');
   
@@ -106,14 +109,27 @@ export default function ProjectDetails() {
     return 'text-neutral-500';
   };
 
-  const filteredTasks = tasks.filter(task => {
-    const pMatch = taskFilters.priority === 'All' || task.priority === taskFilters.priority;
-    const sMatch = taskFilters.status === 'All' || task.status === taskFilters.status;
-    const aMatch = taskFilters.assignee === 'All' || task.assigned_id?.toString() === taskFilters.assignee;
-    const qMatch = task.title.toLowerCase().includes(taskSearch.toLowerCase()) || 
-                   task.description?.toLowerCase().includes(taskSearch.toLowerCase());
-    return pMatch && sMatch && aMatch && qMatch;
-  });
+  const filteredTasks = tasks
+    .filter(task => {
+      const pMatch = taskFilters.priority === 'All' || task.priority === taskFilters.priority;
+      const sMatch = taskFilters.status === 'All' || task.status === taskFilters.status;
+      const aMatch = taskFilters.assignee === 'All' || task.assigned_id?.toString() === taskFilters.assignee;
+      const qMatch = task.title.toLowerCase().includes(taskSearch.toLowerCase()) || 
+                     task.description?.toLowerCase().includes(taskSearch.toLowerCase());
+      return pMatch && sMatch && aMatch && qMatch;
+    })
+    .sort((a, b) => {
+      const valA = sortBy === 'due_date' ? (a.due_date ? new Date(a.due_date).getTime() : 4102444800000) : new Date(a.created_at).getTime();
+      const valB = sortBy === 'due_date' ? (b.due_date ? new Date(b.due_date).getTime() : 4102444800000) : new Date(b.created_at).getTime();
+      return sortOrder === 'asc' ? valA - valB : valB - valA;
+    });
+
+  const overdueCount = tasks.filter(t => t.status !== 'Done' && t.due_date && new Date(t.due_date) < new Date()).length;
+  const upcomingCount = tasks.filter(t => {
+    if (t.status === 'Done' || !t.due_date) return false;
+    const diff = new Date(t.due_date).getTime() - new Date().getTime();
+    return diff > 0 && diff < 86400000;
+  }).length;
 
   const filteredMembers = members.filter(m => 
     m.name.toLowerCase().includes(memberSearch.toLowerCase()) || 
@@ -141,10 +157,11 @@ export default function ProjectDetails() {
     }
   };
 
-  const handleDeleteTask = async (taskId: number) => {
-    if (!window.confirm("Are you sure you want to delete this task?")) return;
+  const handleDeleteTask = async () => {
+    if (!taskToDelete) return;
     try {
-      await api.delete(`/tasks/${taskId}`);
+      await api.delete(`/tasks/${taskToDelete.id}`);
+      setTaskToDelete(null);
       fetchData();
     } catch (err) {
       console.error(err);
@@ -165,14 +182,33 @@ export default function ProjectDetails() {
         </button>
         
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <h2 className="text-4xl font-bold text-white tracking-tight">{project?.name}</h2>
-              <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold text-white uppercase tracking-widest">
-                {project?.role}
-              </span>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <h2 className="text-4xl font-bold text-white tracking-tight">{project?.name}</h2>
+                <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold text-white uppercase tracking-widest">
+                  {project?.role}
+                </span>
+              </div>
+              <p className="text-neutral-500 max-w-2xl">{project?.description || 'No description provided'}</p>
             </div>
-            <p className="text-neutral-500 max-w-2xl">{project?.description || 'No description provided'}</p>
+
+            {(overdueCount > 0 || upcomingCount > 0) && (
+              <div className="flex gap-4">
+                {overdueCount > 0 && (
+                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg">
+                    <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                    <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">{overdueCount} Overdue</span>
+                  </div>
+                )}
+                {upcomingCount > 0 && (
+                  <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg">
+                    <Clock className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">{upcomingCount} Due soon</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           
           <div className="flex gap-3">
@@ -225,10 +261,26 @@ export default function ProjectDetails() {
                 onChange={e => setTaskFilters({...taskFilters, priority: e.target.value})}
               >
                 <option value="All">All Priorities</option>
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
+                <option value="High">Priority: High</option>
+                <option value="Medium">Priority: Medium</option>
+                <option value="Low">Priority: Low</option>
               </select>
+
+              <select 
+                className="bg-neutral-900 border border-neutral-800 text-[10px] font-bold uppercase tracking-widest text-neutral-400 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/10"
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as 'created_at' | 'due_date')}
+              >
+                <option value="created_at">Sort: Created</option>
+                <option value="due_date">Sort: Due Date</option>
+              </select>
+
+              <button 
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                className="bg-neutral-900 border border-neutral-800 text-[10px] font-bold uppercase tracking-widest text-neutral-400 rounded-lg px-3 py-1.5 hover:text-white transition-colors"
+              >
+                {sortOrder === 'asc' ? '↑' : '↓'}
+              </button>
 
               <select 
                 className="bg-neutral-900 border border-neutral-800 text-[10px] font-bold uppercase tracking-widest text-neutral-400 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-white/10"
@@ -291,7 +343,7 @@ export default function ProjectDetails() {
                                      <MoreVertical className="w-3.5 h-3.5" />
                                    </button>
                                    <button 
-                                     onClick={() => handleDeleteTask(task.id)}
+                                     onClick={() => setTaskToDelete(task)}
                                      className="p-1 text-neutral-600 hover:text-red-500 transition-colors"
                                      title="Delete Task"
                                    >
@@ -375,14 +427,24 @@ export default function ProjectDetails() {
              
              <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
                 {filteredMembers.map(member => (
-                  <div key={member.id} className="flex items-center justify-between group">
+                  <div key={member.id} className="flex items-center justify-between group p-2 hover:bg-white/5 rounded-xl transition-colors">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center border border-neutral-700 group-hover:bg-neutral-700 transition-colors">
-                         <span className="text-xs font-bold text-neutral-400 uppercase">{member.name[0]}</span>
+                      <div className={cn(
+                        "w-10 h-10 rounded-full flex items-center justify-center border text-xs font-bold uppercase shadow-inner transition-transform group-hover:scale-105",
+                        member.role === 'Admin' ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400' : 'bg-neutral-800 border-neutral-700 text-neutral-400'
+                      )}>
+                         {member.name[0]}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-white truncate">{member.name}</p>
-                        <p className="text-[10px] text-neutral-500 font-mono truncate uppercase">{member.role}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn(
+                            "text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-widest",
+                            member.role === 'Admin' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-neutral-800 text-neutral-600'
+                          )}>
+                            {member.role}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -488,6 +550,38 @@ export default function ProjectDetails() {
                  </div>
                  <button type="submit" className="w-full bg-white text-neutral-950 font-bold py-4 rounded-xl mt-4 uppercase text-xs tracking-[0.2em]">Add Member</button>
                </form>
+             </motion.div>
+          </div>
+        )}
+
+        {taskToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setTaskToDelete(null)} className="absolute inset-0 bg-neutral-950/90 backdrop-blur-md" />
+             <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-sm bg-neutral-900 border border-neutral-800 rounded-3xl p-8 shadow-2xl overflow-hidden">
+               <div className="absolute top-0 left-0 w-full h-1 bg-red-500" />
+               <div className="flex flex-col items-center text-center space-y-4">
+                 <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mb-2">
+                   <Trash2 className="w-8 h-8" />
+                 </div>
+                 <h3 className="text-xl font-bold text-white">Delete Task?</h3>
+                 <p className="text-sm text-neutral-500 leading-relaxed">
+                   Are you sure you want to delete <span className="text-white font-bold">"{taskToDelete.title}"</span>? This action cannot be undone.
+                 </p>
+                 <div className="grid grid-cols-2 gap-3 w-full mt-6">
+                   <button 
+                     onClick={() => setTaskToDelete(null)}
+                     className="bg-neutral-800 hover:bg-neutral-700 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition-colors"
+                   >
+                     Cancel
+                   </button>
+                   <button 
+                     onClick={handleDeleteTask}
+                     className="bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition-colors"
+                   >
+                     Confirm
+                   </button>
+                 </div>
+               </div>
              </motion.div>
           </div>
         )}
